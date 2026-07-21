@@ -1,0 +1,13 @@
+id,name,age,email,signup_date,salary,country
+1,John Smith,29,john.smith@email.com,2023-01-15,55000,USA
+2,jane doe,,jane.doe@email.com,2023-02-20,62000,usa
+3,Bob Johnson,34,bob.johnson@email.com,2023-03-10,,Canada
+4,Bob Johnson,34,bob.johnson@email.com,2023-03-10,58000,Canada
+5,ALICE WONG,41,alice.wong@email.com,15/04/2023,71000,UK
+6,Mike Brown,,mike.brown@email.com,2023-05-05,49000,USA
+7,Sarah Lee,38,sarah.lee@email.com,2023-06-18,250000,Canada
+8,Tom Davis,45,tom.davis@email.com,2023-07-22,67000,uk
+9,,31,unknown@email.com,2023-08-01,53000,USA
+10,Nina Patel,27,nina.patel@email.com,2023-09-12,,India
+11,Chris Wu,150,chris.wu@email.com,2023-10-03,61000,USA
+12,Laura Kim,33,laura.kim@email.com,2023-11-14,59000,Canada
