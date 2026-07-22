@@ -13,6 +13,7 @@ each one gets wrapped with a docstring-based tool schema so the LLM can
 call it by name.
 """
 
+import re
 import pandas as pd
 import numpy as np
 
@@ -66,17 +67,24 @@ def remove_duplicates(df: pd.DataFrame, subset: list[str] | None = None) -> tupl
     return df, _log("remove_duplicates", subset or "all columns", "success", detail)
 
 
-def fix_dtype(df: pd.DataFrame, column: str, target_type: str) -> tuple[pd.DataFrame, dict]:
+def fix_dtype(df: pd.DataFrame, column: str, target_type: str, dayfirst: bool = True) -> tuple[pd.DataFrame, dict]:
     """
     Convert a column to the correct dtype.
     target_type: 'int', 'float', 'datetime', 'str'
+
+    dayfirst only applies to target_type='datetime'. Ambiguous dates like
+    '03/04/2023' can validly mean either March 4 or April 3 — there is no
+    way to infer this correctly from the data alone. dayfirst defaults to
+    True (day/month/year), matching common non-US conventions; pass
+    dayfirst=False for US-style month/day/year data. This choice is always
+    recorded in the log so it's never a silent guess.
     """
     df = df.copy()
     original_dtype = str(df[column].dtype)
 
     try:
         if target_type == "datetime":
-            df[column] = pd.to_datetime(df[column], errors="coerce", format="mixed")
+            df[column] = _parse_dates(df[column], dayfirst=dayfirst)
         elif target_type == "int":
             df[column] = pd.to_numeric(df[column], errors="coerce").astype("Int64")
         elif target_type == "float":
@@ -90,6 +98,8 @@ def fix_dtype(df: pd.DataFrame, column: str, target_type: str) -> tuple[pd.DataF
 
     new_failures = int(df[column].isna().sum())
     detail = f"converted from {original_dtype} to {target_type}"
+    if target_type == "datetime":
+        detail += f" (assumed day-first format: {dayfirst})"
     if new_failures:
         detail += f" ({new_failures} values could not be parsed and became missing)"
 
@@ -157,6 +167,33 @@ def standardize_text(df: pd.DataFrame, column: str, case: str = "lower", strip_w
         detail += f" (merged {merged} duplicate category values, e.g. 'USA'/'usa' -> one value)"
 
     return df, _log("standardize_text", column, "success", detail)
+
+
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{1,2}-\d{1,2}$")
+
+
+def _parse_dates(series: pd.Series, dayfirst: bool) -> pd.Series:
+    """
+    Parse a mixed-format date column safely.
+
+    Workaround for a pandas quirk (observed on pandas 3.0.2): passing
+    dayfirst=True to pd.to_datetime(..., format="mixed") can incorrectly
+    swap month/day on unambiguous ISO strings too (e.g. '2023-03-10'
+    becoming Oct 3 instead of Mar 10). ISO 'YYYY-MM-DD' is never ambiguous,
+    so it's parsed with an explicit fixed format, immune to dayfirst.
+    dayfirst is only applied to the genuinely ambiguous remainder
+    (e.g. '15/04/2023').
+    """
+    s = series.astype(str)
+    iso_mask = s.str.match(_ISO_DATE_RE)
+    result = pd.Series(pd.NaT, index=series.index, dtype="datetime64[ns]")
+
+    if iso_mask.any():
+        result.loc[iso_mask] = pd.to_datetime(s[iso_mask], format="%Y-%m-%d", errors="coerce")
+    if (~iso_mask).any():
+        result.loc[~iso_mask] = pd.to_datetime(s[~iso_mask], errors="coerce", dayfirst=dayfirst)
+
+    return result
 
 
 def _log(tool: str, column, status: str, detail: str) -> dict:

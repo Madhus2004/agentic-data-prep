@@ -8,8 +8,12 @@ so the agent reasons over a compact summary instead of burning tokens on
 every row.
 """
 
+import re
 import pandas as pd
 import numpy as np
+
+_SLASH_DATE_RE = re.compile(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$")
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{1,2}-\d{1,2}$")
 
 
 def profile_data(df: pd.DataFrame) -> dict:
@@ -77,6 +81,7 @@ def _profile_column(df: pd.DataFrame, col: str) -> dict:
         result["outliers"] = _detect_outliers_iqr(series)
     elif pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series):
         result["casing_inconsistent"] = _check_casing_inconsistent(series)
+        result["date_ambiguity"] = _check_date_ambiguity(series, col)
 
     return result
 
@@ -123,6 +128,50 @@ def _check_casing_inconsistent(series: pd.Series) -> bool:
     lowered_unique = clean.str.lower().nunique()
     original_unique = clean.nunique()
     return lowered_unique < original_unique
+
+
+def _check_date_ambiguity(series: pd.Series, col_name: str) -> dict | None:
+    """
+    Flags date-like string columns where DD/MM vs MM/DD can't be told apart
+    from the data alone (e.g. '03/04/2023'), and columns that mix ISO
+    ('2023-01-15') with slash-separated formats. Only runs on columns that
+    look date-like, either by name or by matching a date-shaped pattern in
+    most of their values.
+    """
+    clean = series.dropna().astype(str)
+    if clean.empty:
+        return None
+
+    name_hint = any(k in col_name.lower() for k in ("date", "dob", "day", "_at", "time"))
+    slash_matches = clean.apply(lambda v: _SLASH_DATE_RE.match(v))
+    iso_matches = clean.apply(lambda v: bool(_ISO_DATE_RE.match(v)))
+
+    slash_hit_rate = slash_matches.notna().mean()
+    looks_date_like = name_hint or slash_hit_rate > 0.3 or iso_matches.mean() > 0.3
+
+    if not looks_date_like:
+        return None
+
+    ambiguous_values = []
+    forced_dayfirst = False
+    for v, m in zip(clean, slash_matches):
+        if m is None:
+            continue
+        first, second = int(m.group(1)), int(m.group(2))
+        if first > 12:
+            forced_dayfirst = True  # unambiguous: only valid as day-first
+        elif first <= 12 and second <= 12:
+            ambiguous_values.append(v)  # could be read either way
+
+    mixed_formats = bool(slash_matches.notna().any()) and bool(iso_matches.any())
+
+    return {
+        "is_likely_date": True,
+        "mixed_formats": mixed_formats,
+        "ambiguous_count": len(ambiguous_values),
+        "ambiguous_sample": ambiguous_values[:5],
+        "dayfirst_evidence": forced_dayfirst,
+    }
 
 
 if __name__ == "__main__":
