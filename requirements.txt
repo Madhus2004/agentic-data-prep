@@ -1,2 +1,5 @@
 pandas
 numpy
+langgraph
+langchain-groq
+python-dotenv

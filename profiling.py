@@ -42,22 +42,67 @@ def profile_data(df: pd.DataFrame) -> dict:
     """
     profile = {
         "shape": {"rows": len(df), "columns": len(df.columns)},
-        "duplicates": _profile_duplicates(df),
         "columns": {}
     }
 
     for col in df.columns:
         profile["columns"][col] = _profile_column(df, col)
 
+    id_like_cols = [c for c in df.columns if profile["columns"][c]["is_likely_id"]]
+    profile["duplicates"] = _profile_duplicates(df, id_like_cols, profile["columns"])
+
     return profile
 
 
-def _profile_duplicates(df: pd.DataFrame) -> dict:
+def _profile_duplicates(df: pd.DataFrame, id_like_cols: list, profile_columns: dict) -> dict:
     dup_count = int(df.duplicated().sum())
-    return {
+    result = {
         "count": dup_count,
-        "pct": round(dup_count / len(df) * 100, 2) if len(df) else 0.0
+        "pct": round(dup_count / len(df) * 100, 2) if len(df) else 0.0,
     }
+
+    compare_cols = [c for c in df.columns if c not in id_like_cols]
+    if compare_cols:
+        dup_excl_id = int(df.duplicated(subset=compare_cols).sum())
+        result["count_excluding_id_columns"] = dup_excl_id
+        result["id_columns_excluded"] = id_like_cols
+        if dup_excl_id > dup_count:
+            result["note"] = (
+                f"{dup_excl_id} row(s) are identical except for an id-like column "
+                f"({id_like_cols}) — likely true duplicates. Use remove_duplicates "
+                f"with subset={compare_cols} to catch these."
+            )
+
+    # Natural-key check: a column can repeat (same person, same email) even
+    # when OTHER columns differ (e.g. salary filled in on a later row and
+    # missing on an earlier one) — a full-row comparison misses this
+    # entirely. Check high-uniqueness, non-id text columns individually.
+    key_candidates = {}
+    for col, col_profile in profile_columns.items():
+        if col in id_like_cols:
+            continue
+        if not (col_profile["dtype"] in ("str", "object")):
+            continue
+        n = len(df)
+        if n == 0:
+            continue
+        uniqueness_ratio = col_profile["unique_count"] / n
+        if uniqueness_ratio < 0.7:  # not unique enough to plausibly be a key
+            continue
+        key_dup_count = int(df.duplicated(subset=[col], keep=False).sum())
+        if key_dup_count > 0:
+            key_candidates[col] = {
+                "duplicate_row_count": key_dup_count,
+                "note": (
+                    f"'{col}' repeats in {key_dup_count} row(s) even though other "
+                    f"columns differ — check if these are the same entity recorded "
+                    f"twice, e.g. with one row missing data the other has filled in."
+                )
+            }
+    if key_candidates:
+        result["natural_key_duplicates"] = key_candidates
+
+    return result
 
 
 def _profile_column(df: pd.DataFrame, col: str) -> dict:
@@ -95,8 +140,19 @@ def _is_likely_id(series: pd.Series, col_name: str) -> bool:
 def _is_likely_categorical(series: pd.Series) -> bool:
     if not (pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series)):
         return False
-    n_unique = series.nunique(dropna=True)
-    return 1 < n_unique <= 20
+    clean = series.dropna()
+    n = len(clean)
+    if n == 0:
+        return False
+    n_unique = clean.nunique()
+    if n_unique <= 1:
+        return False
+    # Ratio-based, not a flat count: on a small dataset, 10-11 unique values
+    # out of 12 rows is really a near-unique identifier (name, email), not a
+    # category, even though 10 or 11 alone looks "small". Require both a low
+    # absolute count AND a low fraction of rows.
+    uniqueness_ratio = n_unique / n
+    return n_unique <= 20 and uniqueness_ratio <= 0.5
 
 
 def _detect_outliers_iqr(series: pd.Series) -> dict:
@@ -172,6 +228,76 @@ def _check_date_ambiguity(series: pd.Series, col_name: str) -> dict | None:
         "ambiguous_sample": ambiguous_values[:5],
         "dayfirst_evidence": forced_dayfirst,
     }
+
+
+def summarize_issues(profile: dict) -> list[str]:
+    """
+    Converts the profile dict into explicit, unambiguous findings in plain
+    English. This exists because handing an LLM a big nested JSON blob and
+    expecting it to correctly infer "these two fields together mean X" is
+    unreliable in practice — it's easy for a model to encode an id-like
+    column anyway, or miss a duplicate signal buried three keys deep, even
+    when temperature=0. Pre-computing the conclusion in Python and stating
+    it as a sentence removes that failure mode: the LLM's job becomes
+    "turn this finding into a tool call", not "notice the finding exists".
+    """
+    issues = []
+    cols = profile["columns"]
+    dup = profile["duplicates"]
+
+    if dup["count"] > 0:
+        issues.append(f"{dup['count']} exact duplicate row(s) found across all columns.")
+
+    if dup.get("count_excluding_id_columns", 0) > dup["count"]:
+        non_id_cols = [c for c in cols if c not in dup.get("id_columns_excluded", [])]
+        issues.append(
+            f"{dup['count_excluding_id_columns']} row(s) are identical except for an "
+            f"id-like column {dup.get('id_columns_excluded')}. Call remove_duplicates "
+            f"with subset={non_id_cols} to remove these."
+        )
+
+    for key_col, info in dup.get("natural_key_duplicates", {}).items():
+        issues.append(
+            f"Column '{key_col}' has the same value repeated across "
+            f"{info['duplicate_row_count']} rows even though other columns differ "
+            f"(likely the same real-world entity entered twice). Call "
+            f"remove_duplicates with subset=['{key_col}'] to deduplicate on it."
+        )
+
+    for col, c in cols.items():
+        if c["missing_count"] > 0:
+            issues.append(f"Column '{col}' has {c['missing_count']} missing value(s) ({c['missing_pct']}%).")
+
+        if c.get("casing_inconsistent"):
+            issues.append(f"Column '{col}' has inconsistent text casing (e.g. mixed case for the same value).")
+
+        da = c.get("date_ambiguity")
+        if da and da.get("is_likely_date"):
+            if da.get("mixed_formats"):
+                issues.append(f"Column '{col}' looks like a date but mixes formats (e.g. ISO and DD/MM/YYYY).")
+            if da.get("ambiguous_count", 0) > 0:
+                issues.append(
+                    f"Column '{col}' has {da['ambiguous_count']} genuinely ambiguous date value(s) "
+                    f"(could be DD/MM or MM/DD). Convert with fix_dtype, choosing dayfirst explicitly."
+                )
+
+        if c.get("outliers") and c["outliers"]["count"] > 0:
+            issues.append(f"Column '{col}' has {c['outliers']['count']} outlier value(s) detected via IQR.")
+
+        if c["is_likely_id"]:
+            issues.append(f"Column '{col}' is an identifier column. Do NOT encode or scale it — exclude it from preprocessing entirely.")
+        elif c["is_likely_categorical"]:
+            issues.append(f"Column '{col}' is categorical ({c['unique_count']} unique values) and is a good candidate for encode_categorical, once cleaned.")
+        elif c["dtype"] in ("str", "object"):
+            issues.append(
+                f"Column '{col}' is free text with high uniqueness ({c['unique_count']} unique values) "
+                f"and is NOT categorical — likely a name, email, or other identifier-like field. "
+                f"Do NOT encode or scale this column."
+            )
+        elif c["dtype"] in ("int64", "float64", "Int64", "int32", "float32"):
+            issues.append(f"Column '{col}' is numeric and a good candidate for scale_numeric, once cleaned (missing values filled, outliers handled).")
+
+    return issues
 
 
 if __name__ == "__main__":
