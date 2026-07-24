@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.git/
+.gitignore
+.ipynb_checkpoints/
+*.egg-info/
+sample_data.csv

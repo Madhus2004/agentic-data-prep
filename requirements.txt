@@ -3,3 +3,7 @@ numpy
 langgraph
 langchain-groq
 python-dotenv
+fastapi
+uvicorn[standard]
+python-multipart
+openpyxl

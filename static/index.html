@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agentic Data Prep</title>
+<meta name="description" content="Upload messy tabular data and watch an LLM agent profile it, plan a fix, execute each step, and explain what it did.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#F1F3F1;
+    --panel:#FFFFFF;
+    --ink:#1C2321;
+    --ink-dim:#5B6560;
+    --rule:#D8DEDA;
+    --accent:#2F6F5E;
+    --accent-bg:#E4EEEA;
+    --warn:#B08A2E;
+    --warn-bg:#F3ECDA;
+    --fail:#B23A3A;
+    --fail-bg:#F5E3E1;
+    --radius:10px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family:'Space Grotesk',system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .mono{font-family:'IBM Plex Mono',ui-monospace,monospace;}
+  .wrap{max-width:860px;margin:0 auto;padding:0 24px;}
+
+  header.hero{padding:72px 0 40px;}
+  .eyebrow{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;
+    letter-spacing:.14em;
+    color:var(--accent);
+    text-transform:uppercase;
+    margin:0 0 18px;
+  }
+  h1{
+    font-size:clamp(32px,5vw,52px);
+    line-height:1.06;
+    margin:0 0 20px;
+    font-weight:700;
+    letter-spacing:-0.01em;
+  }
+  h1 em{font-style:normal;color:var(--accent);}
+  .sub{
+    font-size:17px;
+    line-height:1.6;
+    color:var(--ink-dim);
+    max-width:560px;
+    margin:0;
+  }
+
+  .panel{
+    background:var(--panel);
+    border:1px solid var(--rule);
+    border-radius:var(--radius);
+    padding:28px;
+    margin-bottom:20px;
+  }
+  .panel h2{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;
+    letter-spacing:.12em;
+    text-transform:uppercase;
+    color:var(--ink-dim);
+    margin:0 0 18px;
+    display:flex;
+    align-items:center;
+    gap:10px;
+  }
+  .panel h2::after{content:"";flex:1;height:1px;background:var(--rule);}
+
+  /* dropzone */
+  #dropzone{
+    border:1.5px dashed var(--rule);
+    border-radius:var(--radius);
+    padding:40px 24px;
+    text-align:center;
+    cursor:pointer;
+    transition:border-color .15s ease, background .15s ease;
+  }
+  #dropzone:hover, #dropzone.drag{
+    border-color:var(--accent);
+    background:var(--accent-bg);
+  }
+  #dropzone:focus-visible{outline:2px solid var(--accent); outline-offset:3px;}
+  #dropzone .hint{color:var(--ink-dim); font-size:14px; margin-top:6px;}
+  #fileInput{display:none;}
+  #filename{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:14px;
+    margin-top:14px;
+    color:var(--accent);
+    min-height:20px;
+  }
+
+  button.run{
+    margin-top:20px;
+    width:100%;
+    padding:14px;
+    border:none;
+    border-radius:var(--radius);
+    background:var(--ink);
+    color:var(--bg);
+    font-family:'IBM Plex Mono',monospace;
+    font-size:14px;
+    letter-spacing:.04em;
+    cursor:pointer;
+    transition:background .15s ease, opacity .15s ease;
+  }
+  button.run:hover{background:var(--accent);}
+  button.run:disabled{opacity:.5; cursor:progress;}
+  button.run:focus-visible{outline:2px solid var(--accent); outline-offset:3px;}
+
+  /* plan list */
+  ol.plan{list-style:none; margin:0; padding:0; counter-reset:step;}
+  ol.plan li{
+    counter-increment:step;
+    display:flex;
+    gap:14px;
+    padding:10px 0;
+    border-bottom:1px solid var(--rule);
+    font-family:'IBM Plex Mono',monospace;
+    font-size:13px;
+  }
+  ol.plan li:last-child{border-bottom:none;}
+  ol.plan li::before{
+    content:counter(step,decimal-leading-zero);
+    color:var(--ink-dim);
+    flex-shrink:0;
+  }
+  .tool-name{color:var(--accent); font-weight:600;}
+  .params{color:var(--ink-dim);}
+
+  /* trace / execution log */
+  .trace-row{
+    display:grid;
+    grid-template-columns:84px 1fr;
+    gap:14px;
+    align-items:start;
+    padding:12px 0;
+    border-bottom:1px solid var(--rule);
+    font-family:'IBM Plex Mono',monospace;
+    font-size:13px;
+    opacity:0;
+    animation:rise .35s ease forwards;
+  }
+  .trace-row:last-child{border-bottom:none;}
+  @keyframes rise{from{opacity:0; transform:translateY(4px);} to{opacity:1; transform:translateY(0);}}
+  @media (prefers-reduced-motion: reduce){.trace-row{animation:none; opacity:1;}}
+
+  .pill{
+    font-size:10px;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+    padding:3px 8px;
+    border-radius:999px;
+    text-align:center;
+    white-space:nowrap;
+  }
+  .pill.success{background:var(--accent-bg); color:var(--accent);}
+  .pill.skipped{background:var(--warn-bg); color:var(--warn);}
+  .pill.failed{background:var(--fail-bg); color:var(--fail);}
+
+  .trace-detail .col{color:var(--ink); font-weight:600;}
+  .trace-detail .desc{color:var(--ink-dim); display:block; margin-top:2px;}
+
+  .report-text{
+    font-size:15px;
+    line-height:1.7;
+    color:var(--ink);
+    margin:0;
+  }
+
+  .stats{display:flex; gap:24px; margin-bottom:8px; font-family:'IBM Plex Mono',monospace; font-size:13px; color:var(--ink-dim);}
+  .stats b{color:var(--ink);}
+
+  a.download{
+    display:inline-block;
+    margin-top:6px;
+    padding:12px 20px;
+    border-radius:var(--radius);
+    background:var(--accent);
+    color:#fff;
+    text-decoration:none;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:13px;
+  }
+  a.download:hover{opacity:.9;}
+
+  #error{
+    display:none;
+    background:var(--fail-bg);
+    color:var(--fail);
+    border:1px solid var(--fail);
+    border-radius:var(--radius);
+    padding:16px 20px;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:13px;
+    margin-bottom:20px;
+  }
+
+  footer{padding:40px 0 60px; color:var(--ink-dim); font-size:13px;}
+  footer a{color:var(--ink-dim);}
+
+  #results{display:none;}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="hero">
+    <p class="eyebrow">Agentic Data Prep</p>
+    <h1>Give it messy data.<br>Watch it <em>reason</em> through the fix.</h1>
+    <p class="sub">Upload a CSV, Excel, or JSON file. An LLM agent profiles the issues, plans an ordered fix, executes each step, and explains what it did — auditable, not a black box.</p>
+  </header>
+
+  <div id="error"></div>
+
+  <section class="panel">
+    <h2>Upload</h2>
+    <div id="dropzone" tabindex="0" role="button" aria-label="Choose a file to upload">
+      <div>Drop a .csv, .xlsx, or .json file here, or click to browse</div>
+      <div class="hint">Your data is processed for this run only — nothing is stored.</div>
+      <div id="filename" class="mono"></div>
+    </div>
+    <input type="file" id="fileInput" accept=".csv,.xlsx,.xls,.json">
+    <button class="run" id="runBtn" disabled>Run agent</button>
+  </section>
+
+  <div id="results">
+    <section class="panel">
+      <h2>Plan</h2>
+      <ol class="plan" id="planList"></ol>
+    </section>
+
+    <section class="panel">
+      <h2>Execution trace</h2>
+      <div id="traceList"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Report</h2>
+      <p class="report-text" id="reportText"></p>
+    </section>
+
+    <section class="panel">
+      <h2>Result</h2>
+      <div class="stats" id="statsRow"></div>
+      <a class="download" id="downloadLink" download="cleaned_data.csv">Download cleaned CSV</a>
+    </section>
+  </div>
+
+  <footer>
+    Built with LangGraph + Groq · profiling and cleaning run entirely by the agent, no hardcoded steps ·
+    <a href="https://github.com/" target="_blank" rel="noopener">source on GitHub</a>
+  </footer>
+</div>
+
+<script>
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const filenameEl = document.getElementById('filename');
+const runBtn = document.getElementById('runBtn');
+const errorEl = document.getElementById('error');
+const resultsEl = document.getElementById('results');
+
+let selectedFile = null;
+
+function pickFile(){ fileInput.click(); }
+dropzone.addEventListener('click', pickFile);
+dropzone.addEventListener('keydown', e => { if(e.key==='Enter'||e.key===' '){ e.preventDefault(); pickFile(); }});
+
+['dragover','dragenter'].forEach(evt => dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.add('drag'); }));
+['dragleave','drop'].forEach(evt => dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.remove('drag'); }));
+dropzone.addEventListener('drop', e => {
+  if(e.dataTransfer.files.length){ setFile(e.dataTransfer.files[0]); }
+});
+fileInput.addEventListener('change', () => { if(fileInput.files.length){ setFile(fileInput.files[0]); }});
+
+function setFile(f){
+  selectedFile = f;
+  filenameEl.textContent = f.name;
+  runBtn.disabled = false;
+}
+
+function showError(msg){
+  errorEl.textContent = msg;
+  errorEl.style.display = 'block';
+}
+function hideError(){ errorEl.style.display = 'none'; }
+
+runBtn.addEventListener('click', async () => {
+  if(!selectedFile) return;
+  hideError();
+  resultsEl.style.display = 'none';
+  runBtn.disabled = true;
+  runBtn.textContent = 'Running agent…';
+
+  const formData = new FormData();
+  formData.append('file', selectedFile);
+
+  try{
+    const res = await fetch('/clean', { method:'POST', body: formData });
+    const data = await res.json();
+    if(!res.ok){ throw new Error(data.detail || 'Something went wrong.'); }
+    renderResults(data);
+  }catch(err){
+    showError(err.message || 'Request failed — is the backend running?');
+  }finally{
+    runBtn.disabled = false;
+    runBtn.textContent = 'Run agent';
+  }
+});
+
+function renderResults(data){
+  // Plan
+  const planList = document.getElementById('planList');
+  planList.innerHTML = '';
+  data.plan.forEach(step => {
+    const li = document.createElement('li');
+    const params = Object.entries(step.params || {}).map(([k,v]) => `${k}=${JSON.stringify(v)}`).join(', ');
+    li.innerHTML = `<span><span class="tool-name">${step.tool}</span> <span class="params">(${params})</span></span>`;
+    planList.appendChild(li);
+  });
+
+  // Trace
+  const traceList = document.getElementById('traceList');
+  traceList.innerHTML = '';
+  data.log.forEach((entry, i) => {
+    const row = document.createElement('div');
+    row.className = 'trace-row';
+    row.style.animationDelay = (i * 60) + 'ms';
+    const pillClass = entry.status === 'success' ? 'success' : entry.status === 'skipped' ? 'skipped' : 'failed';
+    row.innerHTML = `
+      <span class="pill ${pillClass}">${entry.status}</span>
+      <span class="trace-detail">
+        <span class="col">${entry.tool} · ${JSON.stringify(entry.column)}</span>
+        <span class="desc">${entry.detail}</span>
+      </span>`;
+    traceList.appendChild(row);
+  });
+
+  // Report
+  document.getElementById('reportText').textContent = data.report;
+
+  // Stats + download
+  document.getElementById('statsRow').innerHTML =
+    `<div>rows: <b>${data.original_rows} → ${data.cleaned_rows}</b></div>` +
+    `<div>columns: <b>${data.original_columns.length} → ${data.cleaned_columns.length}</b></div>`;
+
+  const blob = new Blob([data.cleaned_data_csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  document.getElementById('downloadLink').href = url;
+
+  resultsEl.style.display = 'block';
+  resultsEl.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+</script>
+
+</body>
+</html>

@@ -53,13 +53,13 @@ def scale_numeric(df: pd.DataFrame, column: str, method: str = "standard") -> tu
         mean, std = df[column].mean(), df[column].std()
         if std == 0:
             return df, _log("scale_numeric", column, "skipped", "zero variance, scaling would divide by zero")
-        df[column] = (df[column] - mean) / std
+        df[column] = ((df[column] - mean) / std).round(4)
         detail = f"standard scaled (mean={round(mean,2)}, std={round(std,2)})"
     elif method == "minmax":
         col_min, col_max = df[column].min(), df[column].max()
         if col_min == col_max:
             return df, _log("scale_numeric", column, "skipped", "constant column, scaling would divide by zero")
-        df[column] = (df[column] - col_min) / (col_max - col_min)
+        df[column] = ((df[column] - col_min) / (col_max - col_min)).round(4)
         detail = f"min-max scaled (min={round(col_min,2)}, max={round(col_max,2)})"
     else:
         return df, _log("scale_numeric", column, "failed", f"unknown method '{method}'")
