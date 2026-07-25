@@ -86,9 +86,9 @@ def fix_dtype(df: pd.DataFrame, column: str, target_type: str, dayfirst: bool = 
         if target_type == "datetime":
             df[column] = _parse_dates(df[column], dayfirst=dayfirst)
         elif target_type == "int":
-            df[column] = pd.to_numeric(df[column], errors="coerce").astype("Int64")
+            df[column] = pd.to_numeric(df[column], errors="coerce").astype("Int64") # because of coerce, "abc"->NaN, we need Int64
         elif target_type == "float":
-            df[column] = pd.to_numeric(df[column], errors="coerce")
+            df[column] = pd.to_numeric(df[column], errors="coerce") # no need for int64, float can handle NaN
         elif target_type == "str":
             df[column] = df[column].astype(str)
         else:

@@ -81,15 +81,15 @@ def _profile_duplicates(df: pd.DataFrame, id_like_cols: list, profile_columns: d
     for col, col_profile in profile_columns.items():
         if col in id_like_cols:
             continue
-        if not (col_profile["dtype"] in ("str", "object")):
+        if not (col_profile["dtype"] in ("str", "object")): #leave if int dtype cols
             continue
         n = len(df)
         if n == 0:
             continue
         uniqueness_ratio = col_profile["unique_count"] / n
         if uniqueness_ratio < 0.7:  # not unique enough to plausibly be a key
-            continue
-        key_dup_count = int(df.duplicated(subset=[col], keep=False).sum())
+            continue # not major unique so it can have duplicates. like 'city' col. [10-20 city cause ratio < 0.7]
+        key_dup_count = int(df.duplicated(subset=[col], keep=False).sum()) #keep=false helps to mark both first true element and its duplicate so we can identify all the rows involved in duplication.
         if key_dup_count > 0:
             key_candidates[col] = {
                 "duplicate_row_count": key_dup_count,
@@ -219,7 +219,8 @@ def _check_date_ambiguity(series: pd.Series, col_name: str) -> dict | None:
         elif first <= 12 and second <= 12:
             ambiguous_values.append(v)  # could be read either way
 
-    mixed_formats = bool(slash_matches.notna().any()) and bool(iso_matches.any())
+    mixed_formats = bool(slash_matches.notna().any()) and bool(iso_matches.any()) #slash has nan for iso format but iso format only has true or false. so we check for nan only in slash format.
+
 
     return {
         "is_likely_date": True,

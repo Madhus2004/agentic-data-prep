@@ -29,7 +29,7 @@ def encode_categorical(df: pd.DataFrame, column: str, method: str = "onehot") ->
         df = pd.concat([df.drop(columns=[column]), dummies], axis=1)
         detail = f"one-hot encoded into {len(dummies.columns)} columns ({n_categories} categories)"
     elif method == "label":
-        codes, uniques = pd.factorize(df[column])
+        codes, uniques = pd.factorize(df[column]) #output is like [0,1,2,...] and [unique values in that column]
         df[column] = codes
         mapping = {val: i for i, val in enumerate(uniques)}
         detail = f"label encoded {n_categories} categories, mapping: {mapping}"

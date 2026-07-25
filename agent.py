@@ -34,12 +34,7 @@ def get_llm():
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
         raise RuntimeError(
-            "GROQ_API_KEY not set. Get a free key at console.groq.com, then either:\n"
-            "  1. Create a .env file in this folder containing:\n"
-            "       GROQ_API_KEY=your_key\n"
-            "  2. Or export it directly:\n"
-            "       export GROQ_API_KEY=your_key   (mac/linux)\n"
-            "       set GROQ_API_KEY=your_key      (windows cmd)\n"
+            "GROQ_API_KEY not set."
         )
     return ChatGroq(model=LLM_MODEL, temperature=0, api_key=api_key)
 
@@ -100,7 +95,7 @@ scale_numeric for a column marked "Do NOT encode or scale".
 
 
 def execute_step_node(state: AgentState) -> dict:
-    step = state["plan"][state["current_step"]]
+    step = state["plan"][state["current_step"]] # eg. state['plan'][1]
     tool_name = step["tool"]
     params = step.get("params", {})
 
