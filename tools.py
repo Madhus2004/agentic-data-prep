@@ -18,10 +18,19 @@ import pandas as pd
 import numpy as np
 
 
-def impute_missing(df: pd.DataFrame, column: str, strategy: str = "median") -> tuple[pd.DataFrame, dict]:
+def impute_missing(df: pd.DataFrame, column: str, strategy: str = "median", placeholder: str = "Unknown") -> tuple[pd.DataFrame, dict]:
     """
     Fill missing values in a numeric or categorical column.
-    strategy: 'median', 'mean', 'mode', or 'drop_rows'
+    strategy: 'median', 'mean', 'mode', 'placeholder', or 'drop_rows'
+
+    'mode' only makes sense for genuinely low-cardinality categorical
+    columns (e.g. 'country'). On a near-unique column (e.g. 'name',
+    'email'), every value may appear exactly once — there is no real
+    "most common" value, and Python's tie-breaking will arbitrarily copy
+    some other row's value into the blank one, silently fabricating a
+    duplicate that didn't exist before. Use 'placeholder' for those
+    columns instead — it fills missing values with an explicit marker
+    string rather than guessing.
     """
     df = df.copy()
     missing_before = int(df[column].isna().sum())
@@ -32,6 +41,9 @@ def impute_missing(df: pd.DataFrame, column: str, strategy: str = "median") -> t
     if strategy == "drop_rows":
         df = df.dropna(subset=[column])
         detail = f"dropped {missing_before} rows missing '{column}'"
+    elif strategy == "placeholder":
+        df[column] = df[column].fillna(placeholder)
+        detail = f"filled {missing_before} missing values with placeholder ({placeholder!r})"
     elif strategy == "mode":
         fill_value = df[column].mode(dropna=True)
         fill_value = fill_value.iloc[0] if not fill_value.empty else None
@@ -86,9 +98,9 @@ def fix_dtype(df: pd.DataFrame, column: str, target_type: str, dayfirst: bool = 
         if target_type == "datetime":
             df[column] = _parse_dates(df[column], dayfirst=dayfirst)
         elif target_type == "int":
-            df[column] = pd.to_numeric(df[column], errors="coerce").astype("Int64") # because of coerce, "abc"->NaN, we need Int64
+            df[column] = pd.to_numeric(df[column], errors="coerce").astype("Int64")
         elif target_type == "float":
-            df[column] = pd.to_numeric(df[column], errors="coerce") # no need for int64, float can handle NaN
+            df[column] = pd.to_numeric(df[column], errors="coerce")
         elif target_type == "str":
             df[column] = df[column].astype(str)
         else:
@@ -209,9 +221,10 @@ if __name__ == "__main__":
     df, log4 = handle_outliers(df, "salary", method="cap")
     df, log5 = standardize_text(df, "country", case="upper")
     df, log6 = remove_duplicates(df, subset=["email"])
+    df, log7 = fix_dtype(df, "signup_date", "datetime", dayfirst=True)
 
-    for log in [log1, log2, log3, log4, log5, log6]:
+    for log in [log1, log2, log3, log4, log5, log6, log7]:
         print(log)
 
     print("\nfinal shape:", df.shape)
-    print(df[["age", "salary", "country"]])
+    print(df[["age", "salary", "country", "signup_date"]])

@@ -1,0 +1,9 @@
+id,customer_name,phone,city,order_date,amount
+1,Ravi Kumar,9876543210,Chennai,2024-01-05,1200
+2,Priya Singh,9123456789,chennai,03/04/2024,850
+3,,9988776655,Bangalore,2024-02-11,2100
+4,Arjun Mehta,9988776655,bangalore,2024-02-15,
+5,Sara Ali,9871234560,Mumbai,2024-03-01,99999
+6,Karan Shah,9090909090,MUMBAI,2024-03-10,1500
+7,Neha Joshi,9797979797,Delhi,2024-04-02,1750
+8,Vikram Rao,9090909091,delhi,2024-04-05,1600

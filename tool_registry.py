@@ -36,9 +36,12 @@ TOOL_REGISTRY = {
 # **kwargs to the real function.
 TOOL_DESCRIPTIONS = """
 - impute_missing(column, strategy): fill missing values.
-  strategy: "median" | "mean" | "mode" | "drop_rows"
-  Use "median"/"mean" for numeric columns with outliers or skew, "mode" for
-  categorical columns, "drop_rows" only if missing_pct is very small.
+  strategy: "median" | "mean" | "mode" | "placeholder" | "drop_rows"
+  Use "median"/"mean" for numeric columns. Use "mode" ONLY for genuinely
+  categorical columns (few repeated values). Use "placeholder" for
+  near-unique identifier-style text columns (name, email) — NEVER use
+  "mode" on those, since it can copy another row's value in and create a
+  fake duplicate. Use "drop_rows" only if missing_pct is very small.
 
 - remove_duplicates(subset): remove exact duplicate rows.
   subset: list of column names to compare on (e.g. ["email"]), or null for all columns.

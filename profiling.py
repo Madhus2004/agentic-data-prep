@@ -49,7 +49,8 @@ def profile_data(df: pd.DataFrame) -> dict:
         profile["columns"][col] = _profile_column(df, col)
 
     id_like_cols = [c for c in df.columns if profile["columns"][c]["is_likely_id"]]
-    profile["duplicates"] = _profile_duplicates(df, id_like_cols, profile["columns"])
+    structural_id_cols = [c for c in df.columns if _is_structural_id(c)]
+    profile["duplicates"] = _profile_duplicates(df, structural_id_cols, profile["columns"])
 
     return profile
 
@@ -81,15 +82,26 @@ def _profile_duplicates(df: pd.DataFrame, id_like_cols: list, profile_columns: d
     for col, col_profile in profile_columns.items():
         if col in id_like_cols:
             continue
-        if not (col_profile["dtype"] in ("str", "object")): #leave if int dtype cols
-            continue
+        if col_profile["is_likely_categorical"]:
+            continue  # values are SUPPOSED to repeat in a category column
+
+        is_text = col_profile["dtype"] in ("str", "object")
+        if not is_text:
+            # Numeric columns only qualify if they're identifier-like by
+            # name (e.g. "phone", "account_number"). A plain numeric
+            # measurement (age, salary, price) coincidentally sharing a
+            # value across two rows is completely normal in a small
+            # dataset and is NOT evidence those rows are duplicates.
+            if not col_profile["is_likely_id"]:
+                continue
         n = len(df)
         if n == 0:
             continue
         uniqueness_ratio = col_profile["unique_count"] / n
         if uniqueness_ratio < 0.7:  # not unique enough to plausibly be a key
-            continue # not major unique so it can have duplicates. like 'city' col. [10-20 city cause ratio < 0.7]
-        key_dup_count = int(df.duplicated(subset=[col], keep=False).sum()) #keep=false helps to mark both first true element and its duplicate so we can identify all the rows involved in duplication.
+            continue
+        non_null = df[col].notna()
+        key_dup_count = int(df.loc[non_null, col].duplicated(keep=False).sum())
         if key_dup_count > 0:
             key_candidates[col] = {
                 "duplicate_row_count": key_dup_count,
@@ -115,6 +127,7 @@ def _profile_column(df: pd.DataFrame, col: str) -> dict:
         "missing_count": missing_count,
         "missing_pct": round(missing_count / n * 100, 2) if n else 0.0,
         "unique_count": int(series.nunique(dropna=True)),
+        "unique_count_normalized": _normalized_unique_count(series),
         "is_likely_id": _is_likely_id(series, col),
         "is_likely_categorical": _is_likely_categorical(series),
         "outliers": None,
@@ -123,7 +136,16 @@ def _profile_column(df: pd.DataFrame, col: str) -> dict:
     }
 
     if pd.api.types.is_numeric_dtype(series):
-        result["outliers"] = _detect_outliers_iqr(series)
+        non_null = series.dropna()
+        if non_null.nunique() <= 2:
+            # Binary/near-constant column (e.g. a one-hot encoded flag).
+            # IQR outlier detection is meaningless here — the rare class
+            # in a 0/1 column isn't a data quality problem, it's just an
+            # imbalanced category.
+            result["outliers"] = {"count": 0, "bounds": None, "values": [],
+                                   "note": "binary/near-constant column, IQR outlier check skipped"}
+        else:
+            result["outliers"] = _detect_outliers_iqr(series)
     elif pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series):
         result["casing_inconsistent"] = _check_casing_inconsistent(series)
         result["date_ambiguity"] = _check_date_ambiguity(series, col)
@@ -131,9 +153,47 @@ def _profile_column(df: pd.DataFrame, col: str) -> dict:
     return result
 
 
+def _normalized_unique_count(series: pd.Series) -> int:
+    """
+    Counts unique values after lowercasing/stripping text — so 'Chennai'
+    and 'chennai' count as ONE value, not two. Without this, a column with
+    casing inconsistency looks artificially more unique than it really is,
+    which can wrongly make a genuine category column (like city or
+    country) look like a near-unique identifier. Numeric columns are
+    unaffected — casing doesn't apply to them.
+    """
+    clean = series.dropna()
+    if pd.api.types.is_object_dtype(clean) or pd.api.types.is_string_dtype(clean):
+        return int(clean.astype(str).str.strip().str.lower().nunique())
+    return int(clean.nunique())
+
+
+def _is_structural_id(col_name: str) -> bool:
+    """
+    True only for meaningless, auto-increment-style identifiers (id, uuid,
+    index, foo_id) — the kind of column that's expected to be unique on
+    every single row, including for two rows that are otherwise true
+    duplicates. These are useless as a duplicate-detection key (comparing
+    on them would never find a match) so they're excluded from that check.
+    This is deliberately narrower than is_likely_id: a natural identifier
+    like 'phone' or 'email' should NOT be scaled/encoded as a model
+    feature, but SHOULD still be usable to catch the same real-world
+    entity being entered twice — so it stays eligible for the natural-key
+    duplicate check even though is_likely_id is true for it.
+    """
+    name = col_name.lower()
+    return name in ("id", "index", "uuid") or name.endswith("_id")
+
+
 def _is_likely_id(series: pd.Series, col_name: str) -> bool:
-    name_hints = col_name.lower() in ("id", "index", "uuid") or col_name.lower().endswith("_id")
-    high_cardinality = series.nunique(dropna=True) >= len(series) * 0.95
+    name_hints = (
+        col_name.lower() in ("id", "index", "uuid", "phone", "zip", "zipcode",
+                              "pincode", "postal_code", "account_number")
+        or col_name.lower().endswith("_id")
+        or col_name.lower().endswith("_number")
+    )
+    n = len(series.dropna())
+    high_cardinality = n > 0 and _normalized_unique_count(series) >= n * 0.95
     return bool(name_hints or high_cardinality)
 
 
@@ -144,13 +204,9 @@ def _is_likely_categorical(series: pd.Series) -> bool:
     n = len(clean)
     if n == 0:
         return False
-    n_unique = clean.nunique()
+    n_unique = _normalized_unique_count(series)
     if n_unique <= 1:
         return False
-    # Ratio-based, not a flat count: on a small dataset, 10-11 unique values
-    # out of 12 rows is really a near-unique identifier (name, email), not a
-    # category, even though 10 or 11 alone looks "small". Require both a low
-    # absolute count AND a low fraction of rows.
     uniqueness_ratio = n_unique / n
     return n_unique <= 20 and uniqueness_ratio <= 0.5
 
@@ -219,8 +275,7 @@ def _check_date_ambiguity(series: pd.Series, col_name: str) -> dict | None:
         elif first <= 12 and second <= 12:
             ambiguous_values.append(v)  # could be read either way
 
-    mixed_formats = bool(slash_matches.notna().any()) and bool(iso_matches.any()) #slash has nan for iso format but iso format only has true or false. so we check for nan only in slash format.
-
+    mixed_formats = bool(slash_matches.notna().any()) and bool(iso_matches.any())
 
     return {
         "is_likely_date": True,
@@ -267,7 +322,17 @@ def summarize_issues(profile: dict) -> list[str]:
 
     for col, c in cols.items():
         if c["missing_count"] > 0:
-            issues.append(f"Column '{col}' has {c['missing_count']} missing value(s) ({c['missing_pct']}%).")
+            if c["is_likely_categorical"]:
+                suggestion = "Use impute_missing with strategy='mode' — this is a low-cardinality category, so a most-common value makes sense."
+            elif c["dtype"] in ("str", "object"):
+                suggestion = (
+                    "Do NOT use strategy='mode' — this column is near-unique (like a name "
+                    "or email), so there's no real 'most common' value, and copying another "
+                    "row's value in would fabricate a fake duplicate. Use strategy='placeholder' instead."
+                )
+            else:
+                suggestion = "Use impute_missing with strategy='median' (or 'mean') since this is numeric."
+            issues.append(f"Column '{col}' has {c['missing_count']} missing value(s) ({c['missing_pct']}%). {suggestion}")
 
         if c.get("casing_inconsistent"):
             issues.append(f"Column '{col}' has inconsistent text casing (e.g. mixed case for the same value).")
@@ -288,7 +353,7 @@ def summarize_issues(profile: dict) -> list[str]:
         if c["is_likely_id"]:
             issues.append(f"Column '{col}' is an identifier column. Do NOT encode or scale it — exclude it from preprocessing entirely.")
         elif c["is_likely_categorical"]:
-            issues.append(f"Column '{col}' is categorical ({c['unique_count']} unique values) and is a good candidate for encode_categorical, once cleaned.")
+            issues.append(f"Column '{col}' is categorical ({c['unique_count_normalized']} unique values after normalizing casing) and is a good candidate for encode_categorical, once cleaned.")
         elif c["dtype"] in ("str", "object"):
             issues.append(
                 f"Column '{col}' is free text with high uniqueness ({c['unique_count']} unique values) "

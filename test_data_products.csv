@@ -1,0 +1,11 @@
+id,product,price,category,review_date,stock
+1,Wireless Mouse,19.99,Electronics,2024-01-10,120
+2,Wireless Mouse,19.99,electronics,2024-01-10,120
+3,Bluetooth Speaker,45.50,Electronics,12/03/2024,80
+4,Yoga Mat,,Fitness,2024-02-14,200
+5,Yoga Mat,25.00,fitness,2024-02-20,150
+6,Standing Desk,15000.00,Furniture,2024-03-05,15
+7,Desk Lamp,22.50,FURNITURE,2024-04-18,90
+8,Water Bottle,,Kitchen,2024-04-01,300
+9,Notebook Set,8.75,Office,2024-05-02,500
+10,Desk Organizer,14.00,office,2024-05-10,220
