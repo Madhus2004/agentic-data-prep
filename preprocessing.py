@@ -20,6 +20,11 @@ def encode_categorical(df: pd.DataFrame, column: str, method: str = "onehot") ->
     Use 'onehot' for nominal categories with no order (e.g. country).
     Use 'label' for ordinal categories, or when cardinality is too high
     for one-hot to be practical.
+
+    For 'label', the log entry includes a structured "mapping" dict
+    (category -> integer), not just a human-readable sentence. Save this
+    alongside any trained model — without it, a model's numeric
+    predictions can't be translated back to the original category names.
     """
     df = df.copy()
     n_categories = df[column].nunique(dropna=True)
@@ -28,15 +33,19 @@ def encode_categorical(df: pd.DataFrame, column: str, method: str = "onehot") ->
         dummies = pd.get_dummies(df[column], prefix=column, dtype=int)
         df = pd.concat([df.drop(columns=[column]), dummies], axis=1)
         detail = f"one-hot encoded into {len(dummies.columns)} columns ({n_categories} categories)"
+        log = _log("encode_categorical", column, "success", detail)
+        log["encoded_columns"] = list(dummies.columns)
     elif method == "label":
-        codes, uniques = pd.factorize(df[column]) #output is like [0,1,2,...] and [unique values in that column]
+        codes, uniques = pd.factorize(df[column])
         df[column] = codes
-        mapping = {val: i for i, val in enumerate(uniques)}
+        mapping = {str(val): i for i, val in enumerate(uniques)}
         detail = f"label encoded {n_categories} categories, mapping: {mapping}"
+        log = _log("encode_categorical", column, "success", detail)
+        log["mapping"] = mapping  # structured, reusable — not just embedded in the text above
     else:
         return df, _log("encode_categorical", column, "failed", f"unknown method '{method}'")
 
-    return df, _log("encode_categorical", column, "success", detail)
+    return df, log
 
 
 def scale_numeric(df: pd.DataFrame, column: str, method: str = "standard") -> tuple[pd.DataFrame, dict]:
