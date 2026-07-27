@@ -23,20 +23,24 @@ report, and the cleaned data ready to download.
 
 ---
 
-## Why this exists
+## Why I built this
 
-Most "AI agent" tutorials skip the hard part: making the agent's
-decisions actually correct. This project is built around that problem —
-every function is backed by real test data, and a small evaluation suite
-(`eval_suite.py`) validates the agent against 3 independent test datasets
-covering 12 distinct data-quality issues (missing values, duplicates,
-outliers, casing problems), with a 100% resolution rate on the current
-suite.
+I wanted a project that proved I understand agentic AI, not just that I
+can call an LLM API. So instead of stopping once the agent "worked," I
+built a small evaluation suite (`eval_suite.py`) with 3 test datasets I
+designed myself, each with specific known issues, and checked whether the
+agent actually fixed them.
 
-Along the way, testing surfaced and fixed over a dozen real bugs — a
-pandas date-parsing issue that silently corrupted unambiguous dates,
-false-positive duplicate detection, and a case where naive imputation
-could fabricate fake duplicate records. Details in `PROJECT_GUIDE.md`.
+It didn't, at first. Testing surfaced over a dozen real bugs — a pandas
+date-parsing bug that silently flipped `2023-03-10` into October 3rd, a
+duplicate-detection method that missed rows unless they were byte-for-byte
+identical, a classification heuristic that mislabeled personal names as
+categories, and an imputation strategy that could fabricate a fake
+duplicate by copying one row's name into another. I traced each one to
+its root cause, fixed it, and re-ran the suite to confirm.
+
+After that process, the agent resolves all 12 known issues across my 3
+test datasets. 
 
 ---
 
@@ -63,7 +67,7 @@ main.py             # FastAPI backend, wraps the agent as a web API
 static/index.html   # Frontend demo page
 eval_suite.py        # Validates the agent against test datasets
 sample_data.csv, test_data_*.csv   # Test datasets with known, verified issues
-PROJECT_GUIDE.md    # Full walkthrough of every file and concept
+
 ```
 
 ---
@@ -102,12 +106,13 @@ Render builds and serves it automatically.
 
 ---
 
-## Honest limitations
+## What I'd build next
 
-- **Reflection is simplified.** The agent currently checks "are there more
-  planned steps left," not "did the last step actually work." A fuller
-  version would re-profile after each step and let the LLM decide whether
-  to retry.
-- **Tested on small, hand-built datasets.** The 100% resolution rate is
-  real, but it's on 3 datasets I designed to test specific issues — not
-  yet validated against a large, real-world messy dataset.
+- **Real reflection.** Right now the agent checks "are there more planned
+  steps left," not "did the last step actually work." I'd add a
+  re-profile-and-retry loop so the agent verifies its own results instead
+  of trusting the plan blindly.
+- **Testing at scale.** My 100% resolution rate is real, but it's against
+  3 datasets I designed myself to test specific issues. The next step is
+  running it against a large, messy, real-world dataset (a public Kaggle
+  one) to see what breaks that my test data didn't cover.
