@@ -266,16 +266,34 @@ def _check_date_ambiguity(series: pd.Series, col_name: str) -> dict | None:
 
     ambiguous_values = []
     forced_dayfirst = False
+    forced_monthfirst = False
     for v, m in zip(clean, slash_matches):
         if m is None:
             continue
         first, second = int(m.group(1)), int(m.group(2))
         if first > 12:
-            forced_dayfirst = True  # unambiguous: only valid as day-first
+            forced_dayfirst = True    # unambiguous: only valid as day-first
+        elif second > 12:
+            forced_monthfirst = True  # unambiguous: only valid as month-first
         elif first <= 12 and second <= 12:
             ambiguous_values.append(v)  # could be read either way
 
     mixed_formats = bool(slash_matches.notna().any()) and bool(iso_matches.any())
+
+    # Recommendation logic: real evidence wins if we have it. With no
+    # forcing evidence either way, default to day-first (True) rather than
+    # silently falling back to US month-first convention — day-first is
+    # the more common convention outside the US, and this project's
+    # fix_dtype default already matches that choice.
+    if forced_dayfirst and not forced_monthfirst:
+        recommended_dayfirst = True
+        evidence_basis = "other unambiguous dates in this column force day-first"
+    elif forced_monthfirst and not forced_dayfirst:
+        recommended_dayfirst = False
+        evidence_basis = "other unambiguous dates in this column force month-first"
+    else:
+        recommended_dayfirst = True
+        evidence_basis = "no forcing evidence either way in this column; defaulting to day-first"
 
     return {
         "is_likely_date": True,
@@ -283,6 +301,8 @@ def _check_date_ambiguity(series: pd.Series, col_name: str) -> dict | None:
         "ambiguous_count": len(ambiguous_values),
         "ambiguous_sample": ambiguous_values[:5],
         "dayfirst_evidence": forced_dayfirst,
+        "recommended_dayfirst": recommended_dayfirst,
+        "recommendation_basis": evidence_basis,
     }
 
 
@@ -342,9 +362,12 @@ def summarize_issues(profile: dict) -> list[str]:
             if da.get("mixed_formats"):
                 issues.append(f"Column '{col}' looks like a date but mixes formats (e.g. ISO and DD/MM/YYYY).")
             if da.get("ambiguous_count", 0) > 0:
+                recommended = da.get("recommended_dayfirst", True)
+                basis = da.get("recommendation_basis", "")
                 issues.append(
                     f"Column '{col}' has {da['ambiguous_count']} genuinely ambiguous date value(s) "
-                    f"(could be DD/MM or MM/DD). Convert with fix_dtype, choosing dayfirst explicitly."
+                    f"(could be DD/MM or MM/DD). Convert with fix_dtype, target_type='datetime', "
+                    f"dayfirst={recommended} ({basis}). Use this exact value."
                 )
 
         if c.get("outliers") and c["outliers"]["count"] > 0:
